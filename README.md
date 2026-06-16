@@ -1,34 +1,87 @@
 # MeetingBot
 
-MeetingBot is a Raspberry Pi hosted Discord bot that joins a voice channel, records meeting audio, transcribes it, and generates a `main.md` spec that can be downloaded from the web dashboard or sent back to Discord.
+MeetingBot は、Discord のボイスチャットを録音・文字起こしして、会議内容から `main.md` を自動生成する Raspberry Pi 向けのBotです。
 
-The app is designed for AI hackathon planning sessions where spoken ideas need to become a structured implementation brief.
+AIハッカソンのアイデア出しや要件定義ミーティングで、「話した内容をそのまま実装用のMarkdownにまとめたい」時に使います。
 
-## Features
+## できること
 
-- Discord slash commands for meeting sessions
-- Voice channel audio receive and continuous transcription until `/end-dev`
-- OpenAI transcription with Japanese language hints
-- Audio normalization through ffmpeg before transcription
-- SQLite-backed sessions, notes, transcripts, generated files, and status diagnostics
-- Web dashboard for sessions, settings, prompts, command help, and `main.md` downloads
-- Web-editable `.env` settings for Discord, OpenAI, runtime, storage, and Raspberry Pi deploy values
-- Guild command sync from the web dashboard
-- Voice reconnect and recording resume support after bot restarts
-- systemd service template for Raspberry Pi
+- Discord のVCに参加して音声を受信
+- `/start-dev` から `/end-dev` まで文字起こしを継続
+- OpenAI APIで日本語会議を文字起こし
+- ffmpegで音声を正規化して認識精度を改善
+- 会議メモ、文字起こし、生成ファイル、状態診断をSQLiteに保存
+- Web画面からAPIキー、トークン、プロンプト、モデル設定を変更
+- Web画面から `main.md` をダウンロード
+- 生成した `main.md` をDiscordの指定テキストチャンネルへ送信
+- DiscordコマンドをWeb画面から即時同期
+- VC切断時の再接続、Bot再起動後の録音復帰に対応
 
-## Requirements
+## 全体の流れ
 
-- Raspberry Pi 5 recommended
+```text
+Discord VCに入る
+↓
+/start-dev を実行
+↓
+MeetingBotがVC音声を録音・文字起こし
+↓
+必要なら /add-dev で手動メモを追加
+↓
+/end-dev を実行
+↓
+main.md を生成
+↓
+Discordへ送信、またはWeb画面からダウンロード
+```
+
+## 必要なもの
+
+- Raspberry Pi 5 推奨
 - Node.js 22 LTS
 - ffmpeg
 - sqlite3
 - Discord Bot Token
 - OpenAI API Key
 
-## Environment Variables
+## セットアップ
 
-Copy `.env.example` to `.env` and fill in the secrets.
+まず依存関係を入れてビルドします。
+
+```bash
+npm install
+npm run build
+```
+
+ローカルPCで起動する場合は `sqlite3` コマンドも必要です。Windowsで `spawn sqlite3 ENOENT` が出る場合は、sqlite3 CLIがPCに入っていません。
+
+## 環境変数
+
+`.env.example` を `.env` にコピーして、必要な値を入れます。
+
+```bash
+cp .env.example .env
+```
+
+主に設定する項目は以下です。
+
+| 項目 | 説明 |
+|---|---|
+| `DISCORD_TOKEN` | Discord Bot Token |
+| `DISCORD_CLIENT_ID` | DiscordアプリケーションID。空でもBotログイン後に自動取得します |
+| `DISCORD_GUILD_ID` | コマンドを登録するDiscordサーバーID。空なら参加中サーバーへ登録します |
+| `DISCORD_OUTPUT_CHANNEL_ID` | `main.md` の既定送信先チャンネルID |
+| `OPENAI_API_KEY` | OpenAI API Key |
+| `TRANSCRIBE_MODEL` | 文字起こしモデル。精度優先は `gpt-4o-transcribe` |
+| `TRANSCRIBE_LANGUAGE` | 日本語会議なら `ja` |
+| `MIN_TRANSCRIBE_SECONDS` | 短すぎる音声を捨てる秒数 |
+| `NORMALIZE_AUDIO` | `true` で音声正規化を有効化 |
+| `WEB_ADMIN_PASSWORD` | Web設定画面の管理パスワード |
+| `CHUNK_SECONDS` | 音声を何秒ごとに区切って処理するか |
+| `PI_APP_DIR` | Raspberry Pi上の配置先 |
+| `PI_SERVICE_NAME` | systemdサービス名 |
+
+初期値の例:
 
 ```env
 DISCORD_TOKEN=
@@ -67,86 +120,102 @@ PI_SERVICE_NAME=talk2main
 INITIALIZE_PI=false
 ```
 
-## Local Setup
+## Raspberry Piへデプロイ
 
-```bash
-npm install
-npm run build
-npm start
-```
-
-The app uses the `sqlite3` CLI, so install sqlite3 locally if you want to run the dashboard on Windows or macOS.
-
-## Deploy to Raspberry Pi
+`.env` の `PI_HOST`、`PI_USER`、`PI_PORT`、`PI_APP_DIR` を確認してから実行します。
 
 ```bash
 npm run deploy:pi
 ```
 
-The deployment script expects SSH access to the Pi and installs/updates the app under `PI_APP_DIR`.
+systemdで起動する場合のサービス例は `scripts/talk2main.service` にあります。
 
-## Web Dashboard
+## 起動
 
-Default URL:
-
-```text
-http://miki1586.local:3000
+```bash
+npm start
 ```
 
-Dashboard pages:
+起動するとWeb画面が開けます。
 
-- `/` - session dashboard
-- `/settings` - admin settings, API keys, runtime settings, and prompts
-- `/help` - command and setup guide
-- `/latest/main.md` - latest generated spec download
+```text
+http://<Raspberry PiのIP>:3000/
+```
 
-The initial admin password is `WEB_ADMIN_PASSWORD`. Change it before exposing the dashboard to other users on the LAN.
+例:
 
-## Discord Commands
+```text
+http://192.168.0.173:3000/
+```
 
-| Command | Description |
+## Web画面
+
+| ページ | 説明 |
 |---|---|
-| `/start-dev app:<name> output_channel:<channel>` | Start recording and transcription |
-| `/end-dev` | Stop recording, generate `main.md`, and upload it to Discord |
-| `/status-dev` | Show session and audio diagnostics |
-| `/add-dev content:<text>` | Add a manual note |
-| `/set-prompt content:<text>` | Update the `main.md` prompt |
-| `/show-prompt` | Show the active `main.md` prompt |
-| `/export-dev session_id:<id> channel:<channel>` | Re-upload a generated `main.md` |
-| `/reset-dev` | Reset the active session |
+| `/` | セッション一覧、録音中・完了・失敗数の確認 |
+| `/settings` | Discord、OpenAI、音声認識、プロンプト、Pi設定の編集 |
+| `/help` | 操作方法、コマンド、API設定の説明 |
+| `/latest/main.md` | 最新の `main.md` をダウンロード |
+| `/sessions/:id` | セッション詳細、録音状態、文字起こし、エラー確認 |
 
-## Audio And Transcription
+設定画面に入るには `WEB_ADMIN_PASSWORD` が必要です。初期値は `change_me` です。
 
-MeetingBot receives Discord VC audio with `selfDeaf: false` and keeps transcription active until `/end-dev`.
+## Discordコマンド
 
-Audio is chunked, saved as WAV, normalized with ffmpeg, and then sent to OpenAI. The default settings favor transcription quality:
+| コマンド | 説明 |
+|---|---|
+| `/start-dev` | VC録音と文字起こしを開始します |
+| `/end-dev` | 録音を終了し、`main.md` を生成してDiscordへ送信します |
+| `/status-dev` | VC接続、録音状態、文字起こし件数、エラーを確認します |
+| `/add-dev content:<text>` | 会議中の補足メモを追加します |
+| `/set-prompt content:<text>` | `main.md` 生成用プロンプトを更新します |
+| `/show-prompt` | 現在の `main.md` 生成用プロンプトを表示します |
+| `/export-dev` | 生成済みの `main.md` を再送信します |
+| `/reset-dev` | 進行中セッションをリセットします |
 
-- `TRANSCRIBE_MODEL=gpt-4o-transcribe`
-- `TRANSCRIBE_LANGUAGE=ja`
-- `MIN_TRANSCRIBE_SECONDS=2`
-- `NORMALIZE_AUDIO=true`
+Discordコマンドが表示されない場合は、Web画面の `/settings` から **Sync Discord Commands Now** を押してください。
 
-If transcription is slow, reduce quality by switching to `gpt-4o-mini-transcribe`.
+## 音声認識の精度を上げる設定
 
-## Status Diagnostics
+標準では精度優先の設定です。
 
-The session detail page shows:
+```env
+TRANSCRIBE_MODEL=gpt-4o-transcribe
+TRANSCRIBE_LANGUAGE=ja
+MIN_TRANSCRIBE_SECONDS=2
+NORMALIZE_AUDIO=true
+```
 
-- voice connection status
-- recording status
-- receiver status
-- active speakers
-- audio chunk count
-- transcript count
-- last audio timestamp
-- last transcript timestamp
-- last error
+精度を上げたい場合:
 
-This is intended to make it clear whether a problem is caused by Discord voice connection, audio receive, transcription, SQLite, or delivery to Discord.
+- `TRANSCRIBE_MODEL` は `gpt-4o-transcribe` のままにする
+- `TRANSCRIBE_LANGUAGE=ja` にする
+- `NORMALIZE_AUDIO=true` にする
+- `Transcribe Prompt` に固有名詞、サービス名、話者名、専門用語を入れる
 
-## Discord Permissions
+速度を優先したい場合:
 
-The bot needs:
+```env
+TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+```
+
+## ステータス表示の見方
+
+セッション詳細画面では、どこで問題が起きているか確認できます。
+
+| 表示 | 見るポイント |
+|---|---|
+| Voice Connection | Discord VCに接続できているか |
+| Recording | 録音処理が動いているか |
+| Receiver | 音声受信が始まっているか |
+| Active Speakers | 現在検出中の話者数 |
+| Audio Chunks | 保存された音声チャンク数 |
+| Transcripts | 文字起こし件数 |
+| Last Audio | 最後に音声を受信した時刻 |
+| Last Transcript | 最後に文字起こしが成功した時刻 |
+| Last Error | 直近のエラー内容 |
+
+## Botに必要なDiscord権限
 
 - View Channels
 - Send Messages
@@ -157,15 +226,45 @@ The bot needs:
 - Use Voice Activity
 - `applications.commands`
 
-## Security Notes
+## よくあるトラブル
 
-- Never commit `.env`
-- Keep `OPENAI_API_KEY` server-side
-- Keep `DISCORD_TOKEN` server-side
-- The dashboard is intended for LAN use
-- Do not expose the dashboard directly to the internet without authentication and network hardening
-- Generated `main.md`, audio, and transcripts can contain private meeting content
+### Discordコマンドが出ない
 
-## License
+1. `/settings` を開く
+2. `DISCORD_TOKEN` が設定されているか確認
+3. **Restart App and Apply .env** を押す
+4. **Sync Discord Commands Now** を押す
+5. Discordのチャンネルを開き直す
+
+### BotがVCから落ちる
+
+`/status-dev` またはWebのセッション詳細で `Last Error` を確認してください。
+
+SQLiteの `database is locked` 対策として、DBアクセスはキュー化とリトライを入れています。VC接続が切れた場合も、セッションが録音中なら再接続を試みます。
+
+### 文字起こしされない
+
+以下を確認してください。
+
+- BotがVCに入っている
+- Botがスピーカーミュートでも問題ありません。受信には `selfDeaf: false` が重要です
+- Discord権限に `Connect`、`Speak`、`Use Voice Activity` がある
+- `OPENAI_API_KEY` が設定されている
+- `Last Audio` が更新されている
+- `Last Error` にOpenAIやffmpegのエラーが出ていない
+
+### PCで起動できない
+
+`spawn sqlite3 ENOENT` が出る場合は、PCに sqlite3 CLI を入れてください。Raspberry Pi側には `sqlite3` をインストールしておく必要があります。
+
+## セキュリティ
+
+- `.env` はGitHubに上げないでください
+- `DISCORD_TOKEN` と `OPENAI_API_KEY` はサーバー側だけで使ってください
+- Web画面はLAN内利用を想定しています
+- インターネットへ直接公開しないでください
+- 録音、文字起こし、`main.md` には会議の機密情報が含まれる可能性があります
+
+## ライセンス
 
 MIT
