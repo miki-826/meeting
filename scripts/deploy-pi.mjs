@@ -1,0 +1,75 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+const env = process.env;
+const PI_HOST = env.PI_HOST || "miki1586.local";
+const PI_USER = env.PI_USER || "pi";
+const PI_PORT = env.PI_PORT || "22";
+const PI_APP_DIR = env.PI_APP_DIR || "/opt/talk2main-pi";
+const PI_SERVICE_NAME = env.PI_SERVICE_NAME || "talk2main";
+const INITIALIZE_PI = env.INITIALIZE_PI === "true";
+const target = `${PI_USER}@${PI_HOST}`;
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: "inherit", shell: process.platform === "win32", ...options });
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+  }
+}
+
+function ssh(command) {
+  run("ssh", ["-p", PI_PORT, target, command]);
+}
+
+console.log("Checking Raspberry Pi connection...");
+ssh("echo Connected to Raspberry Pi.; echo Hostname: $(hostname); echo IP Address: $(hostname -I)");
+
+if (INITIALIZE_PI) {
+  console.log("INITIALIZE_PI=true: resetting app environment only.");
+  ssh(`sudo rm -rf ${PI_APP_DIR} /etc/systemd/system/${PI_SERVICE_NAME}.service && sudo mkdir -p ${PI_APP_DIR} && sudo chown -R ${PI_USER}:${PI_USER} ${PI_APP_DIR}`);
+  ssh(`if [ "$(hostname)" != "miki1586" ]; then sudo hostnamectl set-hostname miki1586; echo Raspberry Pi hostname was changed to miki1586.; echo Please reboot the Raspberry Pi manually if miki1586.local is not resolved.; fi`);
+} else {
+  ssh(`sudo mkdir -p ${PI_APP_DIR} && sudo chown -R ${PI_USER}:${PI_USER} ${PI_APP_DIR}`);
+}
+
+const archive = path.resolve(".deploy-talk2main.tar.gz");
+if (fs.existsSync(archive)) fs.unlinkSync(archive);
+run("tar", [
+  "--exclude=node_modules",
+  "--exclude=dist",
+  "--exclude=.env",
+  "--exclude=data/app.db",
+  "--exclude=data/sessions",
+  "--exclude=data/exports",
+  "-czf",
+  archive,
+  "."
+]);
+run("scp", ["-P", PI_PORT, archive, `${target}:${PI_APP_DIR}/app.tar.gz`]);
+ssh(`cd ${PI_APP_DIR} && tar -xzf app.tar.gz && rm app.tar.gz && npm ci && npm run build`);
+ssh(`sudo tee /etc/systemd/system/${PI_SERVICE_NAME}.service >/dev/null <<'SERVICE'
+[Unit]
+Description=MeetingBot Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${PI_APP_DIR}
+EnvironmentFile=-${PI_APP_DIR}/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=${PI_USER}
+Group=${PI_USER}
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+sudo systemctl daemon-reload
+sudo systemctl enable ${PI_SERVICE_NAME}
+`);
+
+console.log("Deploy complete. Start or restart with:");
+console.log(`ssh -p ${PI_PORT} ${target} "sudo systemctl restart ${PI_SERVICE_NAME}"`);

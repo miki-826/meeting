@@ -1,0 +1,17 @@
+[Unit]
+Description=MeetingBot Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/talk2main-pi
+EnvironmentFile=-/opt/talk2main-pi/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=miki1586
+Group=miki1586
+
+[Install]
+WantedBy=multi-user.target

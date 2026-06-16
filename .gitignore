@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+data/app.db
+data/sessions/*
+!data/sessions/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+*.log
+.DS_Store
