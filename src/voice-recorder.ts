@@ -68,6 +68,11 @@ async function writeWav(filePath: string, pcm: Buffer): Promise<void> {
   await fs.writeFile(filePath, Buffer.concat([wavHeader(pcm.length), pcm]));
 }
 
+async function deleteSessionAudio(sessionId: string): Promise<void> {
+  const audioDir = path.join(config.dataDir, "sessions", sessionId, "audio");
+  await fs.rm(audioDir, { recursive: true, force: true });
+}
+
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile("ffmpeg", args, { maxBuffer: 1024 * 1024 * 10 }, (error, _stdout, stderr) => {
@@ -331,6 +336,12 @@ export async function stopVoiceCapture(sessionId: string): Promise<void> {
 
   await Promise.allSettled([...controller.pending]);
   captures.delete(sessionId);
+  if (config.deleteAudioAfterSessionEnd) {
+    await deleteSessionAudio(sessionId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      incrementSessionDiagnostics(sessionId, { lastError: `audio cleanup failed: ${message}` }).catch(console.error);
+    });
+  }
   await upsertSessionDiagnostics(sessionId, {
     recording_status: "stopped",
     active_speakers: 0

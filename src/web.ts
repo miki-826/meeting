@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { config, dashboardUrl } from "./config.js";
 import { discordClient, syncDiscordCommands } from "./discord-bot.js";
@@ -18,6 +19,17 @@ import {
 import { generateMainMd } from "./main-md.js";
 import { sendMainMdToDiscord } from "./discord-delivery.js";
 import { editableEnvKeys, maskSecret, readEnvFile, secretEnvKeys, writeEnvFile, type EditableEnvKey } from "./settings.js";
+
+const ADMIN_COOKIE = "meeting_admin";
+const LEGACY_ADMIN_COOKIE = "talk2main_admin";
+const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60;
+
+type AdminSession = {
+  csrfToken: string;
+  expiresAt: number;
+};
+
+const adminSessions = new Map<string, AdminSession>();
 
 function escapeHtml(value: string | number | null | undefined): string {
   return String(value ?? "")
@@ -46,6 +58,11 @@ function metric(label: string, value: string | number | null | undefined, hint =
 
 function emptyState(text: string): string {
   return `<div class="empty">${escapeHtml(text)}</div>`;
+}
+
+function hiddenCsrf(req: express.Request): string {
+  const session = getAdminSession(req);
+  return session ? `<input type="hidden" name="csrf_token" value="${escapeHtml(session.csrfToken)}">` : "";
 }
 
 function page(title: string, body: string, active: "sessions" | "settings" | "help" = "sessions"): string {
@@ -282,9 +299,54 @@ function cookieValue(cookieHeader: string | undefined, name: string): string | n
   return null;
 }
 
+function pruneAdminSessions(): void {
+  const now = Date.now();
+  for (const [token, session] of adminSessions) {
+    if (session.expiresAt <= now) adminSessions.delete(token);
+  }
+}
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isSecureRequest(req: express.Request): boolean {
+  return req.secure || req.headers["x-forwarded-proto"] === "https";
+}
+
+function adminCookieHeader(req: express.Request, token: string, maxAgeSeconds: number): string {
+  const secure = isSecureRequest(req) ? "; Secure" : "";
+  return `${ADMIN_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+function clearAdminCookieHeaders(): string[] {
+  return [
+    `${ADMIN_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
+    `${LEGACY_ADMIN_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`
+  ];
+}
+
+function getAdminSession(req: express.Request): AdminSession | null {
+  pruneAdminSessions();
+  const token = cookieValue(req.headers.cookie, ADMIN_COOKIE);
+  if (!token) return null;
+  const session = adminSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    adminSessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
 function isAuthed(req: express.Request): boolean {
-  const token = cookieValue(req.headers.cookie, "talk2main_admin");
-  return token === config.webAdminPassword;
+  return getAdminSession(req) !== null;
+}
+
+function validateAdminPassword(password: string): boolean {
+  return timingSafeStringEqual(password, config.webAdminPassword);
 }
 
 function requireAdmin(req: express.Request, res: express.Response): boolean {
@@ -301,6 +363,14 @@ function requireAdmin(req: express.Request, res: express.Response): boolean {
     </section>`,
     "settings"
   ));
+  return false;
+}
+
+function requireCsrf(req: express.Request, res: express.Response): boolean {
+  const session = getAdminSession(req);
+  const token = typeof req.body.csrf_token === "string" ? req.body.csrf_token : "";
+  if (session && token && timingSafeStringEqual(token, session.csrfToken)) return true;
+  res.status(403).send(page("Forbidden", `<div class="page-head"><span class="eyebrow">Security</span><h1>Invalid Request</h1><p>CSRFトークンが無効です。設定画面を開き直して再実行してください。</p></div>`));
   return false;
 }
 
@@ -332,25 +402,41 @@ function envSection(title: string, description: string, keys: EditableEnvKey[], 
 }
 
 export async function startWebServer(): Promise<void> {
+  if (!config.webAdminPassword || config.webAdminPassword === "change_me") {
+    throw new Error("WEB_ADMIN_PASSWORD must be changed from the default value before starting MeetingBot.");
+  }
+
   const app = express();
   app.use(express.urlencoded({ extended: true }));
 
   app.post("/login", (req, res) => {
     const password = String(req.body.password || "");
-    if (password !== config.webAdminPassword) {
+    if (!validateAdminPassword(password)) {
       res.status(403).send(page("Login Failed", `<div class="page-head"><span class="eyebrow">Login</span><h1>Login Failed</h1><p>管理パスワードが違います。</p></div><a class="button secondary" href="/settings">Try again</a>`, "settings"));
       return;
     }
-    res.setHeader("Set-Cookie", `talk2main_admin=${encodeURIComponent(password)}; HttpOnly; SameSite=Lax; Path=/`);
+    const sessionToken = crypto.randomBytes(32).toString("base64url");
+    adminSessions.set(sessionToken, {
+      csrfToken: crypto.randomBytes(32).toString("base64url"),
+      expiresAt: Date.now() + ADMIN_SESSION_MAX_AGE_SECONDS * 1000
+    });
+    res.setHeader("Set-Cookie", [
+      adminCookieHeader(req, sessionToken, ADMIN_SESSION_MAX_AGE_SECONDS),
+      `${LEGACY_ADMIN_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`
+    ]);
     res.redirect("/settings");
   });
 
-  app.post("/logout", (_req, res) => {
-    res.setHeader("Set-Cookie", "talk2main_admin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+  app.post("/logout", (req, res) => {
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
+    const token = cookieValue(req.headers.cookie, ADMIN_COOKIE);
+    if (token) adminSessions.delete(token);
+    res.setHeader("Set-Cookie", clearAdminCookieHeaders());
     res.redirect("/");
   });
 
-  app.get("/", async (_req, res) => {
+  app.get("/", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const sessions = await listSessions();
     const latest = await getLatestGeneratedFile();
     const recordingCount = sessions.filter((session) => session.status === "recording").length;
@@ -376,7 +462,8 @@ export async function startWebServer(): Promise<void> {
       </section>`));
   });
 
-  app.get("/help", (_req, res) => {
+  app.get("/help", (req, res) => {
+    if (!requireAdmin(req, res)) return;
     res.send(page("Help", `
       <div class="page-head">
         <span class="eyebrow">Guide</span>
@@ -446,8 +533,9 @@ export async function startWebServer(): Promise<void> {
         <p>API、Discord、音声認識、main.md生成をまとめて調整できます。トークン欄は空のまま保存すると既存値を維持します。</p>
       </div>
       <form method="post" action="/settings">
+        ${hiddenCsrf(req)}
         <div class="settings-grid">
-          ${envSection("Discord", "Bot接続と送信先チャンネルの設定です。", ["DISCORD_TOKEN", "DISCORD_CLIENT_ID", "DISCORD_GUILD_ID", "DISCORD_OUTPUT_CHANNEL_ID"], envValues)}
+          ${envSection("Discord", "Bot接続、送信先、コマンド実行権限の設定です。", ["DISCORD_TOKEN", "DISCORD_CLIENT_ID", "DISCORD_GUILD_ID", "DISCORD_OUTPUT_CHANNEL_ID", "ADMIN_DISCORD_USER_IDS", "ADMIN_DISCORD_ROLE_IDS"], envValues)}
           ${envSection("OpenAI", "文字起こし、要約、main.md生成に使うモデルとAPIキーです。", ["OPENAI_API_KEY", "TRANSCRIBE_MODEL", "TRANSCRIBE_LANGUAGE", "MIN_TRANSCRIBE_SECONDS", "NORMALIZE_AUDIO", "SUMMARY_MODEL", "MAIN_MD_MODEL"], envValues)}
           ${envSection("Web", "管理画面の接続先とパスワードです。", ["WEB_HOST", "WEB_PORT", "WEB_ADMIN_PASSWORD"], envValues)}
           ${envSection("Runtime", "録音チャンク、通知、セッション継続時間の設定です。", ["CHUNK_SECONDS", "SUMMARY_EVERY_CHUNKS", "REMINDER_EVERY_MINUTES", "REMINDER_CHANNEL_MODE", "MAX_SESSION_MINUTES"], envValues)}
@@ -465,14 +553,14 @@ export async function startWebServer(): Promise<void> {
         <div class="actions"><button>Save Settings</button></div>
       </form>
       <div class="actions">
-        <form method="post" action="/settings/restart"><button class="danger">Restart App and Apply .env</button></form>
-        <form method="post" action="/settings/sync-discord-commands"><button class="secondary">Sync Discord Commands Now</button></form>
-        <form method="post" action="/logout"><button class="secondary">Logout</button></form>
+        <form method="post" action="/settings/restart">${hiddenCsrf(req)}<button class="danger">Restart App and Apply .env</button></form>
+        <form method="post" action="/settings/sync-discord-commands">${hiddenCsrf(req)}<button class="secondary">Sync Discord Commands Now</button></form>
+        <form method="post" action="/logout">${hiddenCsrf(req)}<button class="secondary">Logout</button></form>
       </div>`, "settings"));
   });
 
   app.post("/settings", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
     const existing = await readEnvFile();
     const envUpdates: Record<string, string> = {};
     for (const key of editableEnvKeys) {
@@ -489,18 +577,18 @@ export async function startWebServer(): Promise<void> {
       <div class="page-head"><span class="eyebrow">Saved</span><h1>Settings Saved</h1><p>.envに関わる項目はアプリ再起動後に反映されます。</p></div>
       <div class="actions">
         <a class="button secondary" href="/settings">Back to settings</a>
-        <form method="post" action="/settings/restart"><button class="danger">Restart App and Apply .env</button></form>
+        <form method="post" action="/settings/restart">${hiddenCsrf(req)}<button class="danger">Restart App and Apply .env</button></form>
       </div>`, "settings"));
   });
 
   app.post("/settings/restart", (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
     res.send(page("Restarting", `<div class="page-head"><span class="eyebrow">Restart</span><h1>Restarting</h1><p>アプリを再起動しています。数秒後にもう一度アクセスしてください。</p></div>`, "settings"));
     setTimeout(() => process.exit(0), 500);
   });
 
   app.post("/settings/sync-discord-commands", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
     try {
       const results = await syncDiscordCommands();
       res.send(page("Discord Commands Synced", `
@@ -516,7 +604,8 @@ export async function startWebServer(): Promise<void> {
     }
   });
 
-  app.get("/latest/main.md", async (_req, res) => {
+  app.get("/latest/main.md", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const generated = await getLatestGeneratedFile();
     if (!generated) {
       res.status(404).send("main.md is not generated.");
@@ -526,6 +615,7 @@ export async function startWebServer(): Promise<void> {
   });
 
   app.get("/sessions/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const session = await getSession(req.params.id);
     if (!session) {
       res.status(404).send(page("Not Found", `<div class="page-head"><span class="eyebrow">404</span><h1>Session not found</h1></div>`));
@@ -588,9 +678,10 @@ export async function startWebServer(): Promise<void> {
           <section class="panel">
             <div class="panel-head"><div><h2>main.md</h2><p>${escapeHtml(discordStatus)}</p></div></div>
             <div class="actions">
-              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate"><button>Regenerate</button></form>
+              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate">${hiddenCsrf(req)}<button>Regenerate</button></form>
             </div>
             <form method="post" action="/sessions/${encodeURIComponent(session.id)}/send-to-discord">
+              ${hiddenCsrf(req)}
               <label>Discord channel ID<input name="channel_id" value="${escapeHtml(session.output_channel_id || config.discordOutputChannelId || session.text_channel_id || "")}"></label>
               <div class="actions"><button class="secondary">Send to Discord</button></div>
             </form>
@@ -605,6 +696,7 @@ export async function startWebServer(): Promise<void> {
   });
 
   app.get("/sessions/:id/main.md", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const generated = await getGeneratedFile(req.params.id);
     if (!generated) {
       res.status(404).send("main.md is not generated.");
@@ -614,6 +706,7 @@ export async function startWebServer(): Promise<void> {
   });
 
   app.post("/sessions/:id/regenerate", async (req, res) => {
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
     const session = await getSession(req.params.id);
     if (!session) {
       res.status(404).send("Session not found.");
@@ -625,6 +718,7 @@ export async function startWebServer(): Promise<void> {
   });
 
   app.post("/sessions/:id/send-to-discord", async (req, res) => {
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
     const session = await getSession(req.params.id);
     if (!session) {
       res.status(404).send("Session not found.");

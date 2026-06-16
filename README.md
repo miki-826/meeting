@@ -88,6 +88,8 @@ DISCORD_TOKEN=
 DISCORD_CLIENT_ID=
 DISCORD_GUILD_ID=
 DISCORD_OUTPUT_CHANNEL_ID=
+ADMIN_DISCORD_USER_IDS=
+ADMIN_DISCORD_ROLE_IDS=
 
 OPENAI_API_KEY=
 TRANSCRIBE_MODEL=gpt-4o-transcribe
@@ -99,7 +101,7 @@ MAIN_MD_MODEL=gpt-4.1
 
 WEB_HOST=0.0.0.0
 WEB_PORT=3000
-WEB_ADMIN_PASSWORD=change_me
+WEB_ADMIN_PASSWORD=replace_with_a_strong_password
 
 CHUNK_SECONDS=60
 SUMMARY_EVERY_CHUNKS=5
@@ -158,7 +160,7 @@ http://192.168.0.173:3000/
 | `/latest/main.md` | 最新の `main.md` をダウンロード |
 | `/sessions/:id` | セッション詳細、録音状態、文字起こし、エラー確認 |
 
-設定画面に入るには `WEB_ADMIN_PASSWORD` が必要です。初期値は `change_me` です。
+設定画面に入るには `WEB_ADMIN_PASSWORD` が必要です。`change_me` のままだと安全のため起動しません。必ず強いパスワードへ変更してください。
 
 ## Discordコマンド
 

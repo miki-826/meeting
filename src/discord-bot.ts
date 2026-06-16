@@ -3,6 +3,7 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -148,6 +149,36 @@ function clearReminder(sessionId: string): void {
   const timer = reminderTimers.get(sessionId);
   if (timer) clearInterval(timer);
   reminderTimers.delete(sessionId);
+}
+
+function memberHasAllowedRole(member: ChatInputCommandInteraction["member"]): boolean {
+  if (!member || config.adminDiscordRoleIds.length === 0) return false;
+  const roles = (member as GuildMember).roles;
+  if (roles && "cache" in roles) {
+    return config.adminDiscordRoleIds.some((roleId) => roles.cache.has(roleId));
+  }
+  const rawRoles = (member as { roles?: string[] }).roles;
+  if (Array.isArray(rawRoles)) {
+    return config.adminDiscordRoleIds.some((roleId) => rawRoles.includes(roleId));
+  }
+  return false;
+}
+
+function isAllowedDiscordUser(interaction: ChatInputCommandInteraction): boolean {
+  if (!interaction.guildId) return false;
+  if (config.adminDiscordUserIds.includes(interaction.user.id)) return true;
+  if (memberHasAllowedRole(interaction.member)) return true;
+  return Boolean(
+    interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
+      interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+  );
+}
+
+async function rejectUnauthorizedDiscordUser(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.reply({
+    content: "このコマンドを実行する権限がありません。管理者に確認してください。",
+    ephemeral: true
+  });
 }
 
 function monitorVoiceConnection(input: {
@@ -458,6 +489,10 @@ export async function startDiscordBot(): Promise<void> {
   discordClient.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     try {
+      if (!isAllowedDiscordUser(interaction)) {
+        await rejectUnauthorizedDiscordUser(interaction);
+        return;
+      }
       if (interaction.commandName === "start-dev") await handleStart(interaction);
       if (interaction.commandName === "end-dev") await handleEnd(interaction);
       if (interaction.commandName === "export-dev") await handleExport(interaction);

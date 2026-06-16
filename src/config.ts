@@ -12,11 +12,20 @@ function intFromEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function csvFromEnv(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   discordToken: process.env.DISCORD_TOKEN ?? "",
   discordClientId: process.env.DISCORD_CLIENT_ID ?? "",
   discordGuildId: process.env.DISCORD_GUILD_ID ?? "",
   discordOutputChannelId: process.env.DISCORD_OUTPUT_CHANNEL_ID ?? "",
+  adminDiscordUserIds: csvFromEnv("ADMIN_DISCORD_USER_IDS"),
+  adminDiscordRoleIds: csvFromEnv("ADMIN_DISCORD_ROLE_IDS"),
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
   transcribeModel: process.env.TRANSCRIBE_MODEL ?? "gpt-4o-transcribe",
   transcribeLanguage: process.env.TRANSCRIBE_LANGUAGE ?? "ja",
@@ -32,6 +41,9 @@ export const config = {
   reminderEveryMinutes: intFromEnv("REMINDER_EVERY_MINUTES", 10),
   reminderChannelMode: process.env.REMINDER_CHANNEL_MODE === "output_channel" ? "output_channel" : "start_channel",
   maxSessionMinutes: intFromEnv("MAX_SESSION_MINUTES", 180),
+  deleteAudioAfterSessionEnd: process.env.DELETE_AUDIO_AFTER_SESSION_END !== "false",
+  keepTranscripts: process.env.KEEP_TRANSCRIPTS !== "false",
+  keepSummaries: process.env.KEEP_SUMMARIES !== "false",
   dataDir: path.resolve(process.env.DATA_DIR ?? "./data"),
   piHost: process.env.PI_HOST ?? "miki1586.local",
   piUser: process.env.PI_USER ?? "pi",

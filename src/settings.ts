@@ -6,6 +6,8 @@ export const editableEnvKeys = [
   "DISCORD_CLIENT_ID",
   "DISCORD_GUILD_ID",
   "DISCORD_OUTPUT_CHANNEL_ID",
+  "ADMIN_DISCORD_USER_IDS",
+  "ADMIN_DISCORD_ROLE_IDS",
   "OPENAI_API_KEY",
   "TRANSCRIBE_MODEL",
   "TRANSCRIBE_LANGUAGE",
@@ -69,7 +71,7 @@ export async function writeEnvFile(updates: Record<string, string>): Promise<voi
     if (value !== undefined) current[key] = value;
   }
   const sections = [
-    ["Discord", ["DISCORD_TOKEN", "DISCORD_CLIENT_ID", "DISCORD_GUILD_ID", "DISCORD_OUTPUT_CHANNEL_ID"]],
+    ["Discord", ["DISCORD_TOKEN", "DISCORD_CLIENT_ID", "DISCORD_GUILD_ID", "DISCORD_OUTPUT_CHANNEL_ID", "ADMIN_DISCORD_USER_IDS", "ADMIN_DISCORD_ROLE_IDS"]],
     ["OpenAI", ["OPENAI_API_KEY", "TRANSCRIBE_MODEL", "TRANSCRIBE_LANGUAGE", "MIN_TRANSCRIBE_SECONDS", "NORMALIZE_AUDIO", "SUMMARY_MODEL", "MAIN_MD_MODEL"]],
     ["Web Dashboard", ["WEB_HOST", "WEB_PORT", "WEB_ADMIN_PASSWORD"]],
     [
