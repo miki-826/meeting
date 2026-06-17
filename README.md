@@ -69,7 +69,7 @@ cp .env.example .env
 |---|---|
 | `DISCORD_TOKEN` | Discord Bot Token |
 | `DISCORD_CLIENT_ID` | DiscordアプリケーションID。空でもBotログイン後に自動取得します |
-| `DISCORD_GUILD_ID` | コマンドを登録するDiscordサーバーID。空なら参加中サーバーへ登録します |
+| `DISCORD_GUILD_ID` | コマンドを優先登録するDiscordサーバーID。空なら参加中サーバーへ登録します。複数指定はカンマ区切りです |
 | `DISCORD_OUTPUT_CHANNEL_ID` | `main.md` の既定送信先チャンネルID |
 | `OPENAI_API_KEY` | OpenAI API Key |
 | `TRANSCRIBE_MODEL` | 文字起こしモデル。精度優先は `gpt-4o-transcribe` |
@@ -175,7 +175,9 @@ http://192.168.0.173:3000/
 | `/export-dev` | 生成済みの `main.md` を再送信します |
 | `/reset-dev` | 進行中セッションをリセットします |
 
+Botを新しいDiscordサーバーへ追加した場合、MeetingBotは参加時にそのサーバーへスラッシュコマンドを登録します。
 Discordコマンドが表示されない場合は、Web画面の `/settings` から **Sync Discord Commands Now** を押してください。
+招待URLには `applications.commands` スコープが必要です。
 
 ## 音声認識の精度を上げる設定
 
@@ -237,6 +239,7 @@ TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
 3. **Restart App and Apply .env** を押す
 4. **Sync Discord Commands Now** を押す
 5. Discordのチャンネルを開き直す
+6. 招待URLに `applications.commands` が入っているか確認
 
 ### BotがVCから落ちる
 

@@ -95,14 +95,11 @@ export async function syncDiscordCommands(): Promise<string[]> {
   const commands = commandDefinitions();
   const results: string[] = [];
 
-  if (config.discordGuildId) {
-    await rest.put(Routes.applicationGuildCommands(applicationId, config.discordGuildId), { body: commands });
-    const message = `Registered slash commands for guild ${config.discordGuildId}.`;
-    console.log(message);
-    return [message];
-  }
-
-  const guildIds = [...discordClient.guilds.cache.keys()];
+  const configuredGuildIds = config.discordGuildId
+    .split(",")
+    .map((guildId) => guildId.trim())
+    .filter(Boolean);
+  const guildIds = [...new Set([...configuredGuildIds, ...discordClient.guilds.cache.keys()])];
   if (guildIds.length === 0) {
     await rest.put(Routes.applicationCommands(applicationId), { body: commands });
     const message = "Registered global slash commands. Global commands may take time to appear.";
@@ -117,6 +114,17 @@ export async function syncDiscordCommands(): Promise<string[]> {
     results.push(message);
   }
   return results;
+}
+
+async function syncDiscordCommandsForGuild(guildId: string): Promise<string> {
+  if (!config.discordToken) return "DISCORD_TOKEN is missing.";
+  const applicationId = config.discordClientId || discordClient.application?.id || discordClient.user?.id;
+  if (!applicationId) return "Discord application ID is missing.";
+  const rest = new REST({ version: "10" }).setToken(config.discordToken);
+  await rest.put(Routes.applicationGuildCommands(applicationId, guildId), { body: commandDefinitions() });
+  const message = `Registered slash commands for guild ${guildId}.`;
+  console.log(message);
+  return message;
 }
 
 async function registerCommands(): Promise<void> {
@@ -485,6 +493,9 @@ export async function startDiscordBot(): Promise<void> {
     console.log(`Discord bot logged in as ${client.user.tag}.`);
     registerCommands().catch(console.error);
     resumeRecordingSessions().catch(console.error);
+  });
+  discordClient.on(Events.GuildCreate, (guild) => {
+    syncDiscordCommandsForGuild(guild.id).catch(console.error);
   });
   discordClient.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
