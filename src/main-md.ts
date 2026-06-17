@@ -45,17 +45,16 @@ function buildSessionContext(session: SessionRecord, notes: NoteRecord[]): strin
     "Important:",
     "- Output only the final main.md Markdown.",
     "- Do not include these instructions or the system prompt in the output.",
-    "- If the captured content is insufficient, create a short main.md that clearly says the meeting content was not captured and lists the next actions."
+    "- Some captured Japanese may be mojibake. Infer and restore the intended Japanese where possible.",
+    "- If the captured content is insufficient, clearly state what is missing and list next actions."
   ].join("\n");
 }
 
 function fallbackMainMd(session: SessionRecord, notes: NoteRecord[], reason?: string): string {
-  const noteLines = notes.length
-    ? notes.map((note, index) => `${index + 1}. ${note.content}`).join("\n")
-    : "No meeting notes or transcript content was captured.";
-  const warning = reason ? `\nOpenAI generation note: ${reason}\n` : "";
+  const warning = reason ? `\nGeneration error: ${reason}\n` : "";
+  const noteCount = notes.length;
 
-  return `# MeetingBot Generated Spec
+  return `# main.md generation failed
 
 ## Session
 
@@ -73,18 +72,15 @@ function fallbackMainMd(session: SessionRecord, notes: NoteRecord[], reason?: st
 
 ## Result
 
-Meeting content was not captured well enough to generate a full hackathon main.md.
-Use \`/add-dev content:<text>\` or the next transcription step to add the app idea, rules, AI usage, repository URL, and design direction, then regenerate \`main.md\`.
+MeetingBot could not generate the final prompted main.md.
 ${warning}
-## Captured Notes
-
-${noteLines}
+Captured note count: ${noteCount}
 
 ## Next Actions
 
-1. Add the app idea with \`/add-dev content:<text>\`.
-2. Run \`/end-dev\` again, or use the Web dashboard's \`Regenerate main.md\`.
-3. Confirm that the generated file no longer contains the prompt text itself.
+1. Check OPENAI_API_KEY and MAIN_MD_MODEL in Settings.
+2. Regenerate main.md from the session page.
+3. If the error continues, change MAIN_MD_MODEL to a model that supports Chat Completions.
 `;
 }
 
@@ -98,7 +94,7 @@ async function generateWithOpenAi(session: SessionRecord, notes: NoteRecord[], m
         content: [
           mainPrompt,
           "",
-          "会議内容を整理するときは、次のsummary方針も反映してください。",
+          "Also apply this summary policy when organizing the meeting content:",
           summaryPrompt
         ].join("\n")
       },
@@ -106,8 +102,7 @@ async function generateWithOpenAi(session: SessionRecord, notes: NoteRecord[], m
         role: "user",
         content: buildSessionContext(session, notes)
       }
-    ],
-    temperature: 0.3
+    ]
   });
 
   const content = response.choices[0]?.message?.content?.trim();
@@ -125,7 +120,7 @@ export async function generateMainMd(session: SessionRecord): Promise<string> {
 
   let content: string;
   if (!notes.length) {
-    content = fallbackMainMd(session, notes);
+    content = fallbackMainMd(session, notes, "No meeting notes or transcript content was captured.");
   } else if (!config.openAiApiKey) {
     content = fallbackMainMd(session, notes, "OPENAI_API_KEY is not configured.");
   } else {
