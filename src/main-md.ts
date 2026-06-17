@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
 import { addNote, getSession, getSetting, listNotes, type NoteRecord, type SessionRecord } from "./db.js";
+import { defaultMainPrompt, defaultSummaryPrompt, promptOrDefault } from "./prompt-presets.js";
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -87,14 +88,19 @@ ${noteLines}
 `;
 }
 
-async function generateWithOpenAi(session: SessionRecord, notes: NoteRecord[], mainPrompt: string): Promise<string> {
+async function generateWithOpenAi(session: SessionRecord, notes: NoteRecord[], mainPrompt: string, summaryPrompt: string): Promise<string> {
   const client = new OpenAI({ apiKey: config.openAiApiKey });
   const response = await client.chat.completions.create({
     model: config.mainMdModel,
     messages: [
       {
         role: "system",
-        content: mainPrompt || "You create concise, implementation-ready Markdown specs for AI hackathon web apps."
+        content: [
+          mainPrompt,
+          "",
+          "会議内容を整理するときは、次のsummary方針も反映してください。",
+          summaryPrompt
+        ].join("\n")
       },
       {
         role: "user",
@@ -111,7 +117,8 @@ async function generateWithOpenAi(session: SessionRecord, notes: NoteRecord[], m
 
 export async function generateMainMd(session: SessionRecord): Promise<string> {
   const notes = usefulNotes(await listNotes(session.id));
-  const mainPrompt = (await getSetting("main_prompt")) || "";
+  const mainPrompt = promptOrDefault(await getSetting("main_prompt"), defaultMainPrompt);
+  const summaryPrompt = promptOrDefault(await getSetting("summary_prompt"), defaultSummaryPrompt);
   const exportDir = path.join(config.dataDir, "exports", session.id);
   await fs.mkdir(exportDir, { recursive: true });
   const filePath = path.join(exportDir, "main.md");
@@ -123,7 +130,7 @@ export async function generateMainMd(session: SessionRecord): Promise<string> {
     content = fallbackMainMd(session, notes, "OPENAI_API_KEY is not configured.");
   } else {
     try {
-      content = await generateWithOpenAi(session, notes, mainPrompt);
+      content = await generateWithOpenAi(session, notes, mainPrompt, summaryPrompt);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       content = fallbackMainMd(session, notes, message);

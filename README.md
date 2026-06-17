@@ -97,7 +97,7 @@ TRANSCRIBE_LANGUAGE=ja
 MIN_TRANSCRIBE_SECONDS=2
 NORMALIZE_AUDIO=true
 SUMMARY_MODEL=gpt-4.1-mini
-MAIN_MD_MODEL=gpt-4.1
+MAIN_MD_MODEL=gpt-5.5
 
 WEB_HOST=0.0.0.0
 WEB_PORT=3000
@@ -178,6 +178,14 @@ http://192.168.0.173:3000/
 Botを新しいDiscordサーバーへ追加した場合、MeetingBotは参加時にそのサーバーへスラッシュコマンドを登録します。
 Discordコマンドが表示されない場合は、Web画面の `/settings` から **Sync Discord Commands Now** を押してください。
 招待URLには `applications.commands` スコープが必要です。
+
+## プロンプトの役割
+
+| 項目 | 使い道 |
+|---|---|
+| `Transcribe Prompt` | VC音声を文字起こしするときの聞き取り方です。固有名詞、コマンド名、ファイル名、モデル名を残すために使います |
+| `Summary Prompt` | 長い会議内容を `main.md` に入れやすく整理する方針です。決定事項、TODO、未確認事項の残し方を決めます |
+| `main.md Prompt` | 最後にダウンロードする `main.md` の構成、粒度、出力ルールを決めます |
 
 ## 音声認識の精度を上げる設定
 

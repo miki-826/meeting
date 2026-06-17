@@ -19,6 +19,7 @@ import {
 import { generateMainMd } from "./main-md.js";
 import { sendMainMdToDiscord } from "./discord-delivery.js";
 import { editableEnvKeys, maskSecret, readEnvFile, secretEnvKeys, writeEnvFile, type EditableEnvKey } from "./settings.js";
+import { defaultMainPrompt, defaultSummaryPrompt, defaultTranscribePrompt, promptOrDefault } from "./prompt-presets.js";
 
 const ADMIN_COOKIE = "meeting_admin";
 const LEGACY_ADMIN_COOKIE = "talk2main_admin";
@@ -261,6 +262,8 @@ function page(title: string, body: string, active: "sessions" | "settings" | "he
     }
     .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
     .prompt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .prompt-card { display: grid; gap: 8px; }
+    .prompt-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
     .help-list { display: grid; gap: 10px; padding-left: 20px; margin: 0; }
     .code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: #efefec; border-radius: 5px; padding: 1px 5px; }
     pre { padding: 16px; overflow: auto; background: #111; color: #f4f4f2; border-radius: var(--radius); }
@@ -526,6 +529,9 @@ export async function startWebServer(): Promise<void> {
     const mainPrompt = await getSetting("main_prompt");
     const transcribePrompt = await getSetting("transcribe_prompt");
     const summaryPrompt = await getSetting("summary_prompt");
+    const effectiveMainPrompt = promptOrDefault(mainPrompt, defaultMainPrompt);
+    const effectiveTranscribePrompt = promptOrDefault(transcribePrompt, defaultTranscribePrompt);
+    const effectiveSummaryPrompt = promptOrDefault(summaryPrompt, defaultSummaryPrompt);
     res.send(page("Settings", `
       <div class="page-head">
         <span class="eyebrow">Settings</span>
@@ -545,9 +551,18 @@ export async function startWebServer(): Promise<void> {
         <section class="panel" style="margin-top:14px">
           <div class="panel-head"><div><h2>Prompts</h2><p>Webから編集するのがおすすめです。Discordコマンドより長文を扱いやすくなります。</p></div></div>
           <div class="prompt-grid">
-            <label>main.md Prompt<textarea name="main_prompt">${escapeHtml(mainPrompt || "")}</textarea></label>
-            <label>Transcribe Prompt<textarea name="transcribe_prompt">${escapeHtml(transcribePrompt || "")}</textarea></label>
-            <label>Summary Prompt<textarea name="summary_prompt">${escapeHtml(summaryPrompt || "")}</textarea></label>
+            <label class="prompt-card">main.md Prompt
+              <p>最後にダウンロードする main.md 全体の構成、粒度、出力ルールを決めます。</p>
+              <textarea name="main_prompt">${escapeHtml(effectiveMainPrompt)}</textarea>
+            </label>
+            <label class="prompt-card">Transcribe Prompt
+              <p>VC音声を文字起こしするときの聞き取り方です。固有名詞やコマンド名を残すために使います。</p>
+              <textarea name="transcribe_prompt">${escapeHtml(effectiveTranscribePrompt)}</textarea>
+            </label>
+            <label class="prompt-card">Summary Prompt
+              <p>長い会議内容を main.md に入れやすく整理する方針です。決定事項、TODO、未確認事項の残し方を決めます。</p>
+              <textarea name="summary_prompt">${escapeHtml(effectiveSummaryPrompt)}</textarea>
+            </label>
           </div>
         </section>
         <div class="actions"><button>Save Settings</button></div>
@@ -626,6 +641,7 @@ export async function startWebServer(): Promise<void> {
     const diagnostics = await getSessionDiagnostics(session.id);
     const transcripts = await listTranscripts(session.id);
     const canDownload = generated ? `<a class="button" href="/sessions/${encodeURIComponent(session.id)}/main.md">Download main.md</a>` : `<span class="button secondary" aria-disabled="true">main.md not generated</span>`;
+    const generatedAt = generated?.created_at ? `Generated: ${generated.created_at}` : "main.md has not been generated yet.";
     const discordStatus = generated?.sent_to_discord_at
       ? `Sent / Channel: ${generated.discord_channel_id || "-"} / Message: ${generated.discord_message_id || "-"} / At: ${generated.sent_to_discord_at}`
       : generated
@@ -676,9 +692,11 @@ export async function startWebServer(): Promise<void> {
         </section>
         <aside class="layout">
           <section class="panel">
-            <div class="panel-head"><div><h2>main.md</h2><p>${escapeHtml(discordStatus)}</p></div></div>
+            <div class="panel-head"><div><h2>main.md</h2><p>${escapeHtml(generatedAt)} / ${escapeHtml(discordStatus)}</p></div></div>
             <div class="actions">
-              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate">${hiddenCsrf(req)}<button>Regenerate</button></form>
+              ${canDownload}
+              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate-download">${hiddenCsrf(req)}<button>Regenerate & Download</button></form>
+              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate">${hiddenCsrf(req)}<button class="secondary">Regenerate Only</button></form>
             </div>
             <form method="post" action="/sessions/${encodeURIComponent(session.id)}/send-to-discord">
               ${hiddenCsrf(req)}
@@ -715,6 +733,18 @@ export async function startWebServer(): Promise<void> {
     const filePath = await generateMainMd(session);
     await insertGeneratedFile(session.id, filePath);
     res.redirect(`/sessions/${encodeURIComponent(session.id)}`);
+  });
+
+  app.post("/sessions/:id/regenerate-download", async (req, res) => {
+    if (!requireAdmin(req, res) || !requireCsrf(req, res)) return;
+    const session = await getSession(req.params.id);
+    if (!session) {
+      res.status(404).send("Session not found.");
+      return;
+    }
+    const filePath = await generateMainMd(session);
+    await insertGeneratedFile(session.id, filePath);
+    res.download(filePath, "main.md");
   });
 
   app.post("/sessions/:id/send-to-discord", async (req, res) => {

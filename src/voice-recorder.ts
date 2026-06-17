@@ -15,6 +15,7 @@ import {
   getSetting,
   type SessionRecord
 } from "./db.js";
+import { defaultTranscribePrompt, promptOrDefault } from "./prompt-presets.js";
 
 const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
@@ -117,18 +118,14 @@ function durationMsFromPcm(bytes: number): number {
 }
 
 async function buildTranscriptionPrompt(sessionId: string): Promise<string | undefined> {
-  const prompt = (await getSetting("transcribe_prompt")) || [
-    "日本語のDiscordボイスチャットの会話を文字起こしします。",
-    "AIハッカソン、Webアプリ、API、Discord Bot、main.md、要件定義、プロンプトに関する会話です。",
-    "固有名詞、コマンド名、ファイル名、API名は聞こえた通りに保ってください。"
-  ].join("\n");
+  const prompt = promptOrDefault(await getSetting("transcribe_prompt"), defaultTranscribePrompt);
   const recent = await listTranscripts(sessionId).catch(() => []);
   const recentText = recent
     .slice(-8)
     .map((item) => item.text)
     .join("\n")
     .trim();
-  return [prompt, recentText ? `直前の会話文脈:\n${recentText}` : ""].filter(Boolean).join("\n\n").slice(-1800);
+  return [prompt, recentText ? `Recent conversation context:\n${recentText}` : ""].filter(Boolean).join("\n\n").slice(-1800);
 }
 
 async function transcribeWav(sessionId: string, filePath: string): Promise<string> {

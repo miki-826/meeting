@@ -32,7 +32,7 @@ export const config = {
   minTranscribeSeconds: intFromEnv("MIN_TRANSCRIBE_SECONDS", 2),
   normalizeAudio: process.env.NORMALIZE_AUDIO !== "false",
   summaryModel: process.env.SUMMARY_MODEL ?? "gpt-4.1-mini",
-  mainMdModel: process.env.MAIN_MD_MODEL ?? "gpt-4.1",
+  mainMdModel: process.env.MAIN_MD_MODEL ?? "gpt-5.5",
   webHost: process.env.WEB_HOST ?? "0.0.0.0",
   webPort: intFromEnv("WEB_PORT", 3000),
   webAdminPassword: process.env.WEB_ADMIN_PASSWORD ?? "change_me",
