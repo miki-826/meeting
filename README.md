@@ -187,6 +187,29 @@ Discordコマンドが表示されない場合は、Web画面の `/settings` か
 | `Summary Prompt` | 長い会議内容を `main.md` に入れやすく整理する方針です。決定事項、TODO、未確認事項の残し方を決めます |
 | `main.md Prompt` | 最後にダウンロードする `main.md` の構成、粒度、出力ルールを決めます |
 
+## `/hackathon-build` 向け出力
+
+MeetingBotは会議内容を要件コンパイラとして整理し、セッションごとに以下の5ファイルを生成します。
+
+```text
+project-input/
+├── main.md
+├── project.yaml
+├── acceptance-tests.md
+├── asset-request.yaml
+└── assumptions.md
+```
+
+| ファイル | 内容 |
+|---|---|
+| `main.md` | YAML frontmatterと33セクションを含む、人間・機械両方向けの要件定義 |
+| `project.yaml` | Skill Routing、プロジェクトモード、能力、優先度、スコープ評価用の機械可読データ |
+| `acceptance-tests.md` | UI、AI、カメラ、音声、エラー、Mock Mode、レスポンシブ、デモ信頼性の受け入れ条件 |
+| `asset-request.yaml` | 画像、音声、アイコンなどの生成要否、利用箇所、代替手段、優先度 |
+| `assumptions.md` | 不明点、仮定、ビルド前の決定事項、既存プロジェクト情報、最大5件の重要質問 |
+
+`main.md Prompt` はプロジェクト固有の方向性を調整します。Must Have最大3件、必須セクション、5ファイル出力などのコンパイラ契約は常に適用されます。
+
 ## 音声認識の精度を上げる設定
 
 標準では精度優先の設定です。

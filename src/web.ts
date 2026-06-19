@@ -16,7 +16,12 @@ import {
   setSetting,
   type SessionRecord
 } from "./db.js";
-import { generateMainMd } from "./main-md.js";
+import {
+  generateMainMd,
+  isProjectInputFileName,
+  projectInputFileNames,
+  projectInputFilePath
+} from "./main-md.js";
 import { sendMainMdToDiscord } from "./discord-delivery.js";
 import { editableEnvKeys, maskSecret, readEnvFile, secretEnvKeys, writeEnvFile, type EditableEnvKey } from "./settings.js";
 import { defaultMainPrompt, defaultSummaryPrompt, defaultTranscribePrompt, promptOrDefault } from "./prompt-presets.js";
@@ -640,6 +645,15 @@ export async function startWebServer(): Promise<void> {
     const notes = await listNotes(session.id);
     const diagnostics = await getSessionDiagnostics(session.id);
     const transcripts = await listTranscripts(session.id);
+    const projectInputLinks = (
+      await Promise.all(
+        projectInputFileNames.map(async (fileName) => {
+          const exists = await fs.stat(projectInputFilePath(session.id, fileName)).then(() => true).catch(() => false);
+          if (!exists) return "";
+          return `<a class="button secondary" href="/sessions/${encodeURIComponent(session.id)}/project-input/${encodeURIComponent(fileName)}">${escapeHtml(fileName)}</a>`;
+        })
+      )
+    ).filter(Boolean).join("");
     const canDownload = generated ? `<a class="button" href="/sessions/${encodeURIComponent(session.id)}/main.md">Download main.md</a>` : `<span class="button secondary" aria-disabled="true">main.md not generated</span>`;
     const generatedAt = generated?.created_at ? `Generated: ${generated.created_at}` : "main.md has not been generated yet.";
     const discordStatus = generated?.sent_to_discord_at
@@ -692,11 +706,11 @@ export async function startWebServer(): Promise<void> {
         </section>
         <aside class="layout">
           <section class="panel">
-            <div class="panel-head"><div><h2>main.md</h2><p>${escapeHtml(generatedAt)} / ${escapeHtml(discordStatus)}</p></div></div>
+            <div class="panel-head"><div><h2>Project Input</h2><p>${escapeHtml(generatedAt)} / ${escapeHtml(discordStatus)}</p></div></div>
             <div class="actions">
-              ${canDownload}
-              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate-download">${hiddenCsrf(req)}<button>Regenerate & Download</button></form>
-              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate">${hiddenCsrf(req)}<button class="secondary">Regenerate Only</button></form>
+              ${projectInputLinks || canDownload}
+              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate-download">${hiddenCsrf(req)}<button>Regenerate Project Input</button></form>
+              <form method="post" action="/sessions/${encodeURIComponent(session.id)}/regenerate">${hiddenCsrf(req)}<button class="secondary">Regenerate Without Download</button></form>
             </div>
             <form method="post" action="/sessions/${encodeURIComponent(session.id)}/send-to-discord">
               ${hiddenCsrf(req)}
@@ -721,6 +735,27 @@ export async function startWebServer(): Promise<void> {
       return;
     }
     res.download(generated.file_path, "main.md");
+  });
+
+  app.get("/sessions/:id/project-input/:fileName", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const fileName = req.params.fileName;
+    if (!isProjectInputFileName(fileName)) {
+      res.status(404).send("Project input file not found.");
+      return;
+    }
+    const session = await getSession(req.params.id);
+    if (!session) {
+      res.status(404).send("Session not found.");
+      return;
+    }
+    const filePath = projectInputFilePath(session.id, fileName);
+    const exists = await fs.stat(filePath).then(() => true).catch(() => false);
+    if (!exists) {
+      res.status(404).send("Project input file not generated.");
+      return;
+    }
+    res.download(filePath, fileName);
   });
 
   app.post("/sessions/:id/regenerate", async (req, res) => {
